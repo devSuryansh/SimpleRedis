@@ -5,7 +5,8 @@ LDFLAGS ?= -lpthread
 .PHONY: all test clean
 
 UNIT_TESTS := tests/unit/test_harness tests/unit/test_sds tests/unit/test_siphash \
-	tests/unit/test_dict tests/unit/test_adlist tests/unit/test_skiplist
+	tests/unit/test_dict tests/unit/test_adlist tests/unit/test_skiplist \
+	tests/unit/test_pq
 
 all: $(UNIT_TESTS)
 
@@ -26,6 +27,9 @@ tests/unit/test_adlist: tests/unit/test_adlist.c src/adlist.c src/zmalloc.c test
 
 tests/unit/test_skiplist: tests/unit/test_skiplist.c src/skiplist.c src/sds.c src/zmalloc.c tests/unit/test.h
 	$(CC) $(CFLAGS) -o $@ tests/unit/test_skiplist.c src/skiplist.c src/sds.c src/zmalloc.c
+
+tests/unit/test_pq: tests/unit/test_pq.c src/pq.c src/zmalloc.c tests/unit/test.h
+	$(CC) $(CFLAGS) -o $@ tests/unit/test_pq.c src/pq.c src/zmalloc.c
 
 test: $(UNIT_TESTS)
 	@fail=0; \
