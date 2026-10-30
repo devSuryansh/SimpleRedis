@@ -139,8 +139,16 @@ void setCommand(client *c) {
     if (get && e)
         old = sdsdup(objectSds(e->value));
     dbSet(db, c->argv[1], createStringObject(objectSds(c->argv[2]), sdslen(objectSds(c->argv[2]))));
-    if (has_expire)
+    c->flags |= CLIENT_SKIP_AOF;
+    aofFeedPlainSet(c->db_id, c->argv[1], c->argv[2]);
+    if (has_expire) {
+        long long when = mstime() + expire_ms;
+
+        if (expire_ms <= 0)
+            when = mstime() - 1;
         setKeyExpire(c, c->argv[1], expire_ms);
+        aofFeedPexpireat(c->db_id, c->argv[1], when);
+    }
     if (get) {
         if (old)
             addReplyBulk(c, old, sdslen(old));
@@ -181,6 +189,9 @@ void setexCommand(client *c) {
     dbSet(currentDb(c), c->argv[1],
           createStringObject(objectSds(c->argv[3]), sdslen(objectSds(c->argv[3]))));
     setKeyExpire(c, c->argv[1], sec * 1000);
+    c->flags |= CLIENT_SKIP_AOF;
+    aofFeedPlainSet(c->db_id, c->argv[1], c->argv[3]);
+    aofFeedPexpireat(c->db_id, c->argv[1], mstime() + sec * 1000);
     addReplySimple(c, "OK");
 }
 
@@ -480,6 +491,7 @@ static void expireGeneric(client *c, int absolute, int milliseconds) {
 
     getLongLongFromObject(c->argv[2], &ttl);
     e = lookupKeyWrite(currentDb(c), c->argv[1]);
+    c->flags |= CLIENT_SKIP_AOF;
     if (!e) {
         addReplyLongLong(c, 0);
         return;
@@ -487,6 +499,7 @@ static void expireGeneric(client *c, int absolute, int milliseconds) {
     if (!absolute) {
         if (ttl <= 0) {
             dbDelete(currentDb(c), c->argv[1]);
+            aofFeedPexpireat(c->db_id, c->argv[1], mstime() - 1);
             addReplyLongLong(c, 1);
             return;
         }
@@ -495,11 +508,13 @@ static void expireGeneric(client *c, int absolute, int milliseconds) {
         when = milliseconds ? ttl : ttl * 1000;
         if (when <= mstime()) {
             dbDelete(currentDb(c), c->argv[1]);
+            aofFeedPexpireat(c->db_id, c->argv[1], when);
             addReplyLongLong(c, 1);
             return;
         }
     }
     dbSetExpire(currentDb(c), e, when);
+    aofFeedPexpireat(c->db_id, c->argv[1], when);
     addReplyLongLong(c, 1);
 }
 

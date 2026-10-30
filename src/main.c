@@ -19,6 +19,6 @@ int main(int argc, char **argv) {
     printf("ready %d\n", server.port);
     fflush(stdout);
     aeMain(server.el);
-    prepareShutdown(0, 0);
+    persistForShutdown(server.shutdown_force_save, server.shutdown_nosave);
     return 0;
 }

@@ -23,6 +23,10 @@ static void memberFree(dictNode *node) {
     zfree(m);
 }
 
+dict *createSetDict(void) {
+    return dictCreate(memberCmp, memberHash, memberFree);
+}
+
 void freeSetObject(robj *o) {
     dictRelease(o->ptr);
 }
@@ -47,7 +51,7 @@ void saddCommand(client *c) {
     if (!set && !missing)
         return;
     if (!set) {
-        robj *o = createObject(OBJ_SET, dictCreate(memberCmp, memberHash, memberFree));
+        robj *o = createObject(OBJ_SET, createSetDict());
         dbSet(currentDb(c), c->argv[1], o);
         set = o->ptr;
     }

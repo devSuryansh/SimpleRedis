@@ -33,12 +33,19 @@ void freeZsetObject(robj *o) {
     zfree(z);
 }
 
-static zset *zsetCreate(void) {
+zset *createZset(void) {
     zset *z = zmalloc(sizeof(*z));
 
     z->dict = dictCreate(zmemCmp, zmemHash, zmemFree);
     z->zsl = zslCreate();
     return z;
+}
+
+void zsetInsertOwned(zset *z, double score, sds member) {
+    zmember *m = zmalloc(sizeof(*m));
+
+    m->sl = zslInsert(z->zsl, score, member);
+    dictAdd(z->dict, &m->node);
 }
 
 static zset *lookupZset(client *c, robj *key, int *missing) {
@@ -83,7 +90,7 @@ void zaddCommand(client *c) {
     if (!z && !missing)
         return;
     if (!z) {
-        robj *o = createObject(OBJ_ZSET, zsetCreate());
+        robj *o = createObject(OBJ_ZSET, createZset());
         dbSet(currentDb(c), c->argv[1], o);
         z = o->ptr;
     }

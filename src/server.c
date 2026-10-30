@@ -110,6 +110,8 @@ void freeClient(client *c) {
         listDelNode(server.clients, c->ln);
         c->ln = NULL;
     }
+    unwatchAll(c);
+    pubsubUnsubscribeAll(c);
     sdsfree(c->query);
     sdsfree(c->reply);
     sdsfree(c->name);
@@ -135,8 +137,11 @@ client *createClient(int fd) {
     c->reply = sdsempty();
     c->last_interaction_ms = monotime();
     c->watched_keys = listCreate();
+    listSetFreeMethod(c->watched_keys, (void (*)(void *))sdsfree);
     c->pubsub_channels = listCreate();
+    listSetFreeMethod(c->pubsub_channels, (void (*)(void *))sdsfree);
     c->multi_queue = listCreate();
+    listSetFreeMethod(c->multi_queue, freeMultiCommand);
     if (fd >= 0) {
         if (server.clients)
             listAddNodeTail(server.clients, c);
@@ -165,6 +170,30 @@ static int arityOk(redisCommand *cmd, int argc) {
     if (cmd->arity > 0)
         return argc == cmd->arity;
     return argc >= -cmd->arity;
+}
+
+static int multiImmediate(redisCommand *cmd) {
+    return strcmp(cmd->name, "exec") == 0 || strcmp(cmd->name, "discard") == 0 ||
+           strcmp(cmd->name, "multi") == 0 || strcmp(cmd->name, "watch") == 0 ||
+           strcmp(cmd->name, "unwatch") == 0;
+}
+
+static int pubsubImmediate(redisCommand *cmd) {
+    return strcmp(cmd->name, "subscribe") == 0 || strcmp(cmd->name, "unsubscribe") == 0 ||
+           strcmp(cmd->name, "ping") == 0 || strcmp(cmd->name, "quit") == 0;
+}
+
+void callCommand(client *c, redisCommand *cmd) {
+    long long before = server.dirty;
+
+    if ((cmd->flags & CMD_DENYOOM) && !server.loading && overMaxmemory()) {
+        addReplyError(c, "OOM command not allowed when used memory > 'maxmemory'");
+        return;
+    }
+    c->flags &= ~CLIENT_SKIP_AOF;
+    cmd->proc(c);
+    if ((cmd->flags & CMD_WRITE) && server.dirty != before && !(c->flags & CLIENT_SKIP_AOF))
+        aofFeed(c);
 }
 
 int processCommand(client *c) {
@@ -200,16 +229,32 @@ int processCommand(client *c) {
             c->flags |= CLIENT_DIRTY_EXEC;
         return -1;
     }
-    if (!(c->flags & CLIENT_MULTI) && (cmd->flags & CMD_DENYOOM) && !server.loading &&
-        overMaxmemory()) {
-        addReplyError(c, "OOM command not allowed when used memory > 'maxmemory'");
+    if ((c->flags & CLIENT_PUBSUB) && !pubsubImmediate(cmd)) {
+        addReplyErrorFmt(c,
+                         "ERR Can't execute '%s': only SUBSCRIBE / UNSUBSCRIBE / PING / QUIT are "
+                         "allowed in this context",
+                         cmd->name);
         return -1;
     }
-    cmd->proc(c);
+    if ((c->flags & CLIENT_MULTI) && !multiImmediate(cmd)) {
+        queueMultiCommand(c, cmd);
+        addReplySimple(c, "QUEUED");
+        return 0;
+    }
+    callCommand(c, cmd);
     return 0;
 }
 
 void pingCommand(client *c) {
+    if (c->flags & CLIENT_PUBSUB) {
+        addReplyPushLen(c, 2);
+        addReplyBulk(c, "pong", 4);
+        if (c->argc == 1)
+            addReplyBulk(c, "", 0);
+        else
+            addReplyBulkSds(c, objectSds(c->argv[1]));
+        return;
+    }
     if (c->argc == 1)
         addReplySimple(c, "PONG");
     else
@@ -247,6 +292,7 @@ static int serverCron(aeEventLoop *el, long long id, void *clientData) {
     if (shutdown_requested)
         server.shutdown_asap = 1;
     activeExpireCycle(ACTIVE_EXPIRE_KEYS);
+    aofCron();
     if (server.timeout > 0 && server.clients) {
         long long now = monotime();
         listIter *it = listGetIterator(server.clients, AL_START_HEAD);
@@ -277,6 +323,10 @@ static void initCommandTable(void) {
     initHashCommands();
     initSetCommands();
     initZsetCommands();
+    initAdminCommands();
+    initPersistCommands();
+    initMultiCommands();
+    initPubsubCommands();
 }
 
 void initTestServer(void) {
@@ -284,6 +334,7 @@ void initTestServer(void) {
     initServerConfig();
     server.hash_seed[0] = 1;
     server.clients = listCreate();
+    server.pubsub_channels = dictCreate(pubsubCmp, pubsubHash, pubsubFree);
     server.aof_fd = -1;
     server.ipfd = -1;
     initCommandTable();
@@ -296,6 +347,7 @@ void initServer(void) {
 
     loadHashSeed();
     server.clients = listCreate();
+    server.pubsub_channels = dictCreate(pubsubCmp, pubsubHash, pubsubFree);
     server.aof_fd = -1;
     initCommandTable();
     initDatabases();
@@ -317,6 +369,12 @@ void initServer(void) {
     server.port = anetTcpPort(fd);
     aeCreateFileEvent(server.el, fd, AE_READABLE, acceptTcpHandler, NULL);
     aeCreateTimeEvent(server.el, 100, serverCron, NULL);
+    if (server.appendonly) {
+        aofOpen();
+        aofLoad();
+    } else {
+        loadSnapshot();
+    }
 }
 
 void prepareShutdown(int force_save, int nosave) {

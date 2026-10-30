@@ -28,7 +28,7 @@ void freeHashObject(robj *o) {
     dictRelease(o->ptr);
 }
 
-static dict *hashCreate(void) {
+dict *createHashDict(void) {
     return dictCreate(fieldCmp, fieldHash, fieldFree);
 }
 
@@ -64,7 +64,7 @@ void hsetCommand(client *c) {
     if (!h && !missing)
         return;
     if (!h) {
-        robj *o = createObject(OBJ_HASH, hashCreate());
+        robj *o = createObject(OBJ_HASH, createHashDict());
         dbSet(currentDb(c), c->argv[1], o);
         h = o->ptr;
     }

@@ -23,6 +23,7 @@
 #define CLIENT_DIRTY_EXEC (1 << 2)
 #define CLIENT_CLOSE_AFTER_REPLY (1 << 3)
 #define CLIENT_PUBSUB (1 << 4)
+#define CLIENT_SKIP_AOF (1 << 5)
 
 #define CMD_WRITE (1 << 0)
 #define CMD_DENYOOM (1 << 1)
@@ -156,8 +157,11 @@ typedef struct redisServer {
     int aof_selected_db;
     int loading;
     int shutdown_asap;
+    int shutdown_nosave;
+    int shutdown_force_save;
     uint64_t next_client_id;
     long long total_commands;
+    long long dirty;
     unsigned char hash_seed[16];
     redisDb *db;
     list *clients;
@@ -224,10 +228,16 @@ void flushAll(void);
 int overMaxmemory(void);
 void aofFeed(client *c);
 void aofFeedArgv(int dbid, int argc, robj **argv);
+void aofFeedPlainSet(int dbid, robj *key, robj *val);
+void aofFeedPexpireat(int dbid, robj *key, long long when_ms);
+void aofOpen(void);
+void aofCron(void);
+void aofShutdown(void);
 void aofLoad(void);
 int aofRewrite(void);
 void aofFsync(int sync);
 int saveSnapshot(void);
+void saveCommand(client *c);
 int loadSnapshot(void);
 void persistForShutdown(int force_save, int nosave);
 void prepareShutdown(int force_save, int nosave);
@@ -238,6 +248,20 @@ void initListCommands(void);
 void initHashCommands(void);
 void initSetCommands(void);
 void initZsetCommands(void);
+void initAdminCommands(void);
+void initPersistCommands(void);
+void initMultiCommands(void);
+void initPubsubCommands(void);
+void queueMultiCommand(client *c, redisCommand *cmd);
+void freeMultiCommand(void *ptr);
+void callCommand(client *c, redisCommand *cmd);
+unsigned int pubsubHash(dictNode *node);
+int pubsubCmp(dictNode *node, const void *key, size_t keylen);
+void pubsubFree(dictNode *node);
+dict *createHashDict(void);
+dict *createSetDict(void);
+zset *createZset(void);
+void zsetInsertOwned(zset *z, double score, sds member);
 void freeHashObject(robj *o);
 void freeSetObject(robj *o);
 void freeZsetObject(robj *o);

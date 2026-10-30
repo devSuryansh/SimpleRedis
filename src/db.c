@@ -87,6 +87,7 @@ static void deleteEntry(redisDb *db, kvEntry *e) {
     unsigned int h = keyHash(e->key, sdslen(e->key));
 
     signalModifiedKey(db, e->key);
+    server.dirty++;
     if (e->heap_idx != (size_t)-1)
         pqRemove(db->expires, e);
     dictDelete(db->dict, e->key, sdslen(e->key), h);
@@ -123,6 +124,7 @@ void dbSet(redisDb *db, robj *key, robj *val) {
     if (e && expireIfNeeded(db, e))
         e = NULL;
     signalModifiedKey(db, k);
+    server.dirty++;
     if (e) {
         decrRefCount(e->value);
         e->value = val;
@@ -148,6 +150,7 @@ int dbDelete(redisDb *db, robj *key) {
 void dbSetExpire(redisDb *db, kvEntry *e, long long when_ms) {
     e->expire_at_ms = when_ms;
     pqUpsert(db->expires, e, when_ms);
+    server.dirty++;
     signalModifiedKey(db, e->key);
 }
 
@@ -156,6 +159,7 @@ void dbPersist(redisDb *db, kvEntry *e) {
         pqRemove(db->expires, e);
     e->expire_at_ms = -1;
     e->heap_idx = (size_t)-1;
+    server.dirty++;
     signalModifiedKey(db, e->key);
 }
 
