@@ -21,6 +21,45 @@ Not supported, and rejected with `-ERR unknown command`: replication, cluster, s
 
 On-disk files are specific to SimpleRedis. An AOF or `SRDB` snapshot written here restarts here. Moving an existing Redis dataset is a one-time copy through a client.
 
+## Clients
+
+Point a normal client at `127.0.0.1:6379`. Protocol 2 and protocol 3 both work.
+
+Python:
+
+```python
+import redis
+client = redis.Redis(host="127.0.0.1", port=6379, protocol=3)
+client.set("k", "v")
+```
+
+Node:
+
+```javascript
+import { createClient } from "redis";
+const client = createClient({ url: "redis://127.0.0.1:6379" });
+await client.connect();
+await client.set("k", "v");
+```
+
+Go:
+
+```go
+rdb := redis.NewClient(&redis.Options{
+    Addr:     "127.0.0.1:6379",
+    Protocol: 3,
+})
+```
+
+A service manager runs the binary in the foreground:
+
+```
+ExecStart=/usr/local/bin/simpleredis-server /etc/simpleredis/redis.conf
+Restart=on-failure
+```
+
+`SIGINT` and `SIGTERM` persist the active mode, then exit.
+
 ## Tests
 
 ```bash
@@ -28,4 +67,4 @@ make test
 python3 tests/integration/protocol.py
 ```
 
-The integration suite is added with the protocol tests. It uses only the Python standard library.
+The integration suite uses only the Python standard library. Set `SIMPLEREDIS_BIN` to point it at another binary.
