@@ -1,0 +1,9 @@
+context/
+*.o
+src/simpleredis-server
+tests/unit/test_*
+!tests/unit/test_*.c
+!tests/unit/test.h
+*.aof
+*.srdb
+.superpowers/
