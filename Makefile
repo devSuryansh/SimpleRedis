@@ -4,12 +4,15 @@ LDFLAGS ?= -lpthread
 
 .PHONY: all test clean
 
-UNIT_TESTS := tests/unit/test_harness
+UNIT_TESTS := tests/unit/test_harness tests/unit/test_sds
 
 all: $(UNIT_TESTS)
 
 tests/unit/test_harness: tests/unit/test_harness.c tests/unit/test.h
 	$(CC) $(CFLAGS) -o $@ tests/unit/test_harness.c
+
+tests/unit/test_sds: tests/unit/test_sds.c src/sds.c src/zmalloc.c tests/unit/test.h
+	$(CC) $(CFLAGS) -o $@ tests/unit/test_sds.c src/sds.c src/zmalloc.c
 
 test: $(UNIT_TESTS)
 	@fail=0; \
