@@ -6,9 +6,9 @@ LDFLAGS ?= -lpthread
 
 UNIT_TESTS := tests/unit/test_harness tests/unit/test_sds tests/unit/test_siphash \
 	tests/unit/test_dict tests/unit/test_adlist tests/unit/test_skiplist \
-	tests/unit/test_pq
+	tests/unit/test_pq tests/unit/test_resp tests/unit/test_ping
 
-all: $(UNIT_TESTS)
+all: src/simpleredis-server $(UNIT_TESTS)
 
 tests/unit/test_harness: tests/unit/test_harness.c tests/unit/test.h
 	$(CC) $(CFLAGS) -o $@ tests/unit/test_harness.c
@@ -30,6 +30,19 @@ tests/unit/test_skiplist: tests/unit/test_skiplist.c src/skiplist.c src/sds.c sr
 
 tests/unit/test_pq: tests/unit/test_pq.c src/pq.c src/zmalloc.c tests/unit/test.h
 	$(CC) $(CFLAGS) -o $@ tests/unit/test_pq.c src/pq.c src/zmalloc.c
+
+tests/unit/test_resp: tests/unit/test_resp.c src/resp.c src/sds.c src/zmalloc.c tests/unit/test.h
+	$(CC) $(CFLAGS) -o $@ tests/unit/test_resp.c src/resp.c src/sds.c src/zmalloc.c
+
+CORE_SRC := src/zmalloc.c src/sds.c src/siphash.c src/dict.c src/adlist.c \
+	src/skiplist.c src/pq.c src/resp.c src/ae.c src/anet.c src/util.c \
+	src/object.c src/config.c src/networking.c src/server.c
+
+src/simpleredis-server: $(CORE_SRC) src/main.c
+	$(CC) $(CFLAGS) -o $@ $(CORE_SRC) src/main.c $(LDFLAGS)
+
+tests/unit/test_ping: tests/unit/test_ping.c $(CORE_SRC) tests/unit/test.h
+	$(CC) $(CFLAGS) -o $@ tests/unit/test_ping.c $(CORE_SRC) $(LDFLAGS)
 
 test: $(UNIT_TESTS)
 	@fail=0; \

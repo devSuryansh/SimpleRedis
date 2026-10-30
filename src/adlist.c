@@ -109,3 +109,7 @@ void listSetFreeMethod(list *l, void (*freeFn)(void *)) {
 listNode *listFirst(const list *l) {
     return l->head;
 }
+
+listNode *listLast(const list *l) {
+    return l->tail;
+}

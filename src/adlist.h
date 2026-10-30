@@ -33,6 +33,7 @@ listNode *listNext(listIter *iter);
 void listReleaseIterator(listIter *iter);
 void listSetFreeMethod(list *list, void (*free)(void *));
 listNode *listFirst(const list *list);
+listNode *listLast(const list *list);
 
 static inline void *listNodeValue(const listNode *node) {
     return node->value;

@@ -31,5 +31,6 @@ sds sdscatlen(sds s, const void *t, size_t len);
 sds sdscpy(sds s, const char *t);
 int sdscmp(const sds a, const sds b);
 sds sdsfromlonglong(long long value);
+void sdsDiscard(sds s, size_t n);
 
 #endif

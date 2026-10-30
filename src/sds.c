@@ -108,6 +108,15 @@ int sdscmp(const sds a, const sds b) {
     return 0;
 }
 
+void sdsDiscard(sds s, size_t n) {
+    size_t len = sdslen(s);
+
+    if (n > len)
+        n = len;
+    memmove(s, s + n, len - n + 1);
+    sdsHdr(s)->len = (uint32_t)(len - n);
+}
+
 sds sdsfromlonglong(long long value) {
     char buf[32];
     int n = snprintf(buf, sizeof(buf), "%lld", value);
