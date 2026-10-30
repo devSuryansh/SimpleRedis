@@ -9,6 +9,16 @@ make
 ./src/simpleredis-server redis.conf
 ```
 
+The same server is also implemented in Rust. Build it with `rustc` (Cargo works too, and the crate has no dependencies):
+
+```bash
+mkdir -p rust/target/debug
+rustc --edition 2021 -O -o rust/target/debug/simpleredis-server rust/src/main.rs
+./rust/target/debug/simpleredis-server redis.conf
+```
+
+Snapshots written by either binary load in the other. Point `SIMPLEREDIS_BIN` at the binary you want the protocol suite to start.
+
 The process stays in the foreground and logs to stderr. A service manager should run that command directly. `SIGINT` and `SIGTERM` persist the active mode, then exit.
 
 The command matrix, reply bytes, and file formats are specified in [docs/superpowers/specs/2026-10-30-simpleredis-design.md](docs/superpowers/specs/2026-10-30-simpleredis-design.md).
@@ -65,6 +75,8 @@ Restart=on-failure
 ```bash
 make test
 python3 tests/integration/protocol.py
+python3 tests/integration/cross_lang.py
+rustc --edition 2021 --test -o /tmp/simpleredis-rust-tests rust/src/main.rs && /tmp/simpleredis-rust-tests
 ```
 
 The integration suite uses only the Python standard library. Set `SIMPLEREDIS_BIN` to point it at another binary.
