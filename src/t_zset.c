@@ -113,7 +113,7 @@ void zaddCommand(client *c) {
             added++;
         }
     }
-    signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+    dbTouch(currentDb(c), c->argv[1]);
     addReplyLongLong(c, added);
 }
 
@@ -140,7 +140,7 @@ void zremCommand(client *c) {
         n++;
     }
     if (n)
-        signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+        dbTouch(currentDb(c), c->argv[1]);
     if (zslLength(z->zsl) == 0)
         dbDelete(currentDb(c), c->argv[1]);
     addReplyLongLong(c, n);

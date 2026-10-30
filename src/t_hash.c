@@ -84,7 +84,7 @@ void hsetCommand(client *c) {
             added++;
         }
     }
-    signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+    dbTouch(currentDb(c), c->argv[1]);
     addReplyLongLong(c, added);
 }
 
@@ -127,7 +127,7 @@ void hdelCommand(client *c) {
         }
     }
     if (n)
-        signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+        dbTouch(currentDb(c), c->argv[1]);
     if (dictSize(h) == 0)
         dbDelete(currentDb(c), c->argv[1]);
     addReplyLongLong(c, n);

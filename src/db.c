@@ -170,6 +170,11 @@ int checkType(client *c, kvEntry *e, int type) {
     return 1;
 }
 
+void dbTouch(redisDb *db, robj *key) {
+    server.dirty++;
+    signalModifiedKey(db, objectSds(key));
+}
+
 void signalModifiedKey(redisDb *db, sds key) {
     unsigned int h = keyHash(key, sdslen(key));
     watchKey *w = (watchKey *)dictFind(db->watched_keys, key, sdslen(key), h);

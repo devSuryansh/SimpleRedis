@@ -220,6 +220,7 @@ void dbSetExpire(redisDb *db, kvEntry *e, long long when_ms);
 void dbPersist(redisDb *db, kvEntry *e);
 int expireIfNeeded(redisDb *db, kvEntry *e);
 void signalModifiedKey(redisDb *db, sds key);
+void dbTouch(redisDb *db, robj *key);
 void touchWatchedKey(redisDb *db, sds key);
 void activeExpireCycle(int max_keys);
 int dbSizeLive(redisDb *db);

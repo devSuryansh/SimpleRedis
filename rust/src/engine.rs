@@ -276,6 +276,7 @@ impl Hub {
         let _ = file.seek(SeekFrom::End(0));
         self.loading = true;
         let id = self.add_session();
+        self.sessions.get_mut(&id).unwrap().authed = true;
         let mut off = 0;
         while off < buf.len() {
             match resp::parse(&buf[off..]) {
@@ -534,9 +535,6 @@ fn bad_syntax(name: &[u8], args: &[Vec<u8>]) -> bool {
         if n != 3 {
             return true;
         }
-        if matches_any(name, &["expire", "pexpire", "expireat", "pexpireat", "lindex"]) {
-            return parse_i64(&args[2]).is_none();
-        }
         return false;
     }
     if eq(name, "setex") {
@@ -552,7 +550,7 @@ fn bad_syntax(name: &[u8], args: &[Vec<u8>]) -> bool {
         return n != 1;
     }
     if eq(name, "incrby") || eq(name, "decrby") {
-        return n != 3 || parse_i64(&args[2]).is_none();
+        return n != 3;
     }
     if eq(name, "mget") || eq(name, "del") || eq(name, "exists") || eq(name, "watch")
         || eq(name, "lpush") || eq(name, "rpush") || eq(name, "sadd") || eq(name, "srem")
@@ -635,6 +633,15 @@ fn syntax_error(session: &mut Session, name: &[u8], args: &[Vec<u8>]) {
         return;
     }
     session.err(&format!("ERR wrong number of arguments for '{lower}' command"));
+}
+
+fn push_argv(out: &mut Vec<u8>, args: &[Vec<u8>]) {
+    out.extend(format!("*{}\r\n", args.len()).into_bytes());
+    for arg in args {
+        out.extend(format!("${}\r\n", arg.len()).into_bytes());
+        out.extend_from_slice(arg);
+        out.extend_from_slice(b"\r\n");
+    }
 }
 
 fn write_argv(file: &mut File, args: &[Vec<u8>]) {
@@ -741,7 +748,7 @@ impl Hub {
             None
         };
         let when = expire_ms.map(|ms| if ms <= 0 { now_ms() - 1 } else { now_ms() + ms });
-        self.store_string(db_i, args[1].clone(), args[2].clone(), when);
+        self.store_string(db_i, args[1].clone(), args[2].clone(), when, true);
         let session = self.sessions.get_mut(&id).unwrap();
         session.skip_aof = true;
         if get {
@@ -761,16 +768,24 @@ impl Hub {
         }
     }
 
-    fn store_string(&mut self, db_i: usize, key: Vec<u8>, val: Vec<u8>, expire: Option<i64>) {
+    fn store_string(
+        &mut self,
+        db_i: usize,
+        key: Vec<u8>,
+        val: Vec<u8>,
+        expire: Option<i64>,
+        update_expire: bool,
+    ) {
         let db = &mut self.dbs[db_i];
-        Self::touch(db, &key);
         Self::touch(db, &key);
         let entry = db.keys.entry(key).or_insert_with(|| Entry {
             value: Value::Str(Vec::new()),
             expire: None,
         });
         entry.value = Value::Str(val);
-        entry.expire = expire;
+        if update_expire {
+            entry.expire = expire;
+        }
     }
 
     fn cmd_setnx(&mut self, id: u64, args: &[Vec<u8>]) {
@@ -779,7 +794,7 @@ impl Hub {
             self.sessions.get_mut(&id).unwrap().int(0);
             return;
         }
-        self.store_string(db_i, args[1].clone(), args[2].clone(), None);
+        self.store_string(db_i, args[1].clone(), args[2].clone(), None, true);
         self.feed(db_i, &[b"SETNX".to_vec(), args[1].clone(), args[2].clone()]);
         self.sessions.get_mut(&id).unwrap().int(1);
     }
@@ -788,7 +803,7 @@ impl Hub {
         let sec = parse_i64(&args[2]).unwrap_or(0);
         let db_i = self.sessions[&id].db;
         let when = now_ms() + sec * 1000;
-        self.store_string(db_i, args[1].clone(), args[3].clone(), Some(when));
+        self.store_string(db_i, args[1].clone(), args[3].clone(), Some(when), true);
         self.feed(db_i, &[b"SET".to_vec(), args[1].clone(), args[3].clone()]);
         self.feed(db_i, &[b"PEXPIREAT".to_vec(), args[1].clone(), when.to_string().into_bytes()]);
         self.sessions.get_mut(&id).unwrap().simple("OK");
@@ -818,7 +833,7 @@ impl Hub {
         let db_i = self.sessions[&id].db;
         let mut i = 1;
         while i < args.len() {
-            self.store_string(db_i, args[i].clone(), args[i + 1].clone(), None);
+            self.store_string(db_i, args[i].clone(), args[i + 1].clone(), None, true);
             i += 2;
         }
         self.feed_owned(db_i, args);
@@ -857,13 +872,19 @@ impl Hub {
             return;
         }
         let neu = cur + by;
-        self.store_string(db_i, args[1].clone(), neu.to_string().into_bytes(), None);
+        self.store_string(db_i, args[1].clone(), neu.to_string().into_bytes(), None, false);
         self.feed_owned(db_i, args);
         self.sessions.get_mut(&id).unwrap().int(neu);
     }
 
     fn cmd_incrby(&mut self, id: u64, args: &[Vec<u8>], neg: bool) {
-        let mut by = parse_i64(&args[2]).unwrap_or(0);
+        let Some(mut by) = parse_i64(&args[2]) else {
+            self.sessions
+                .get_mut(&id)
+                .unwrap()
+                .err("ERR value is not an integer or out of range");
+            return;
+        };
         if neg {
             if by == i64::MIN {
                 self.sessions.get_mut(&id).unwrap().err("ERR increment or decrement would overflow");
@@ -886,7 +907,7 @@ impl Hub {
         };
         base.extend_from_slice(&args[2]);
         let len = base.len() as i64;
-        self.store_string(db_i, args[1].clone(), base, None);
+        self.store_string(db_i, args[1].clone(), base, None, false);
         self.feed_owned(db_i, args);
         self.sessions.get_mut(&id).unwrap().int(len);
     }
@@ -997,7 +1018,13 @@ impl Hub {
 
     fn cmd_expire(&mut self, id: u64, args: &[Vec<u8>]) {
         let name = args[0].to_ascii_lowercase();
-        let ttl = parse_i64(&args[2]).unwrap_or(0);
+        let Some(ttl) = parse_i64(&args[2]) else {
+            self.sessions
+                .get_mut(&id)
+                .unwrap()
+                .err("ERR value is not an integer or out of range");
+            return;
+        };
         let absolute = name.ends_with(b"at");
         let millis = name.starts_with(b"p");
         let db_i = self.sessions[&id].db;
@@ -1937,7 +1964,78 @@ impl Hub {
             self.sessions.get_mut(&id).unwrap().err("ERR AOF is disabled");
             return;
         }
+        if self.rewrite_aof().is_err() {
+            self.sessions.get_mut(&id).unwrap().err("ERR AOF rewrite failed");
+            return;
+        }
         self.sessions.get_mut(&id).unwrap().simple("OK");
+    }
+
+    fn rewrite_aof(&mut self) -> std::io::Result<()> {
+        let path = self.path(&self.aof_name);
+        let tmp = path.with_extension("aof.tmp");
+        let mut body = Vec::new();
+        for (index, db) in self.dbs.iter().enumerate() {
+            if db.keys.is_empty() {
+                continue;
+            }
+            let select = vec![b"SELECT".to_vec(), index.to_string().into_bytes()];
+            push_argv(&mut body, &select);
+            for (key, entry) in &db.keys {
+                if Self::expired(entry) {
+                    continue;
+                }
+                match &entry.value {
+                    Value::Str(val) => {
+                        push_argv(&mut body, &[b"SET".to_vec(), key.clone(), val.clone()]);
+                    }
+                    Value::List(list) => {
+                        let mut args = vec![b"RPUSH".to_vec(), key.clone()];
+                        args.extend(list.iter().cloned());
+                        push_argv(&mut body, &args);
+                    }
+                    Value::Hash(map) => {
+                        let mut args = vec![b"HSET".to_vec(), key.clone()];
+                        for (field, val) in map {
+                            args.push(field.clone());
+                            args.push(val.clone());
+                        }
+                        push_argv(&mut body, &args);
+                    }
+                    Value::Set(set) => {
+                        let mut args = vec![b"SADD".to_vec(), key.clone()];
+                        args.extend(set.keys().cloned());
+                        push_argv(&mut body, &args);
+                    }
+                    Value::Zset { scores, .. } => {
+                        let mut args = vec![b"ZADD".to_vec(), key.clone()];
+                        for (member, score) in scores {
+                            args.push(score.to_string().into_bytes());
+                            args.push(member.clone());
+                        }
+                        push_argv(&mut body, &args);
+                    }
+                }
+                if let Some(when) = entry.expire {
+                    push_argv(
+                        &mut body,
+                        &[b"PEXPIREAT".to_vec(), key.clone(), when.to_string().into_bytes()],
+                    );
+                }
+            }
+        }
+        fs::write(&tmp, &body)?;
+        fs::rename(&tmp, &path)?;
+        self.aof = Some(
+            OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .append(true)
+                .open(&path)?,
+        );
+        self.aof_db = -1;
+        Ok(())
     }
 
     pub fn save_snapshot(&mut self) -> std::io::Result<()> {
@@ -2130,10 +2228,18 @@ fn read_value(buf: &[u8], off: &mut usize, type_byte: u8) -> Option<Value> {
     }
 }
 
-pub fn load_config(path: &Path) -> (Hub, u16) {
+pub fn load_config(path: &Path) -> (Hub, u16, String) {
     let text = fs::read_to_string(path).unwrap_or_default();
-    let mut hub = Hub::new(16);
+    let mut databases = 16usize;
     let mut port = 6379u16;
+    let mut bind = "127.0.0.1".to_string();
+    let mut appendonly = false;
+    let mut dir = PathBuf::from(".");
+    let mut aof_name = "appendonly.aof".to_string();
+    let mut db_name = "dump.srdb".to_string();
+    let mut requirepass = Vec::new();
+    let mut timeout_secs = 0u64;
+    let mut maxmemory = 0u64;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -2143,20 +2249,33 @@ pub fn load_config(path: &Path) -> (Hub, u16) {
         let key = parts.next().unwrap_or("");
         let val = parts.next().unwrap_or("").trim();
         match key {
+            "bind" => bind = val.to_string(),
             "port" => port = val.parse().unwrap_or(6379),
-            "databases" => hub = Hub::new(val.parse().unwrap_or(16)),
-            "appendonly" => hub.appendonly = val.eq_ignore_ascii_case("yes"),
-            "dir" => hub.dir = PathBuf::from(val),
-            "appendfilename" => hub.aof_name = val.to_string(),
-            "dbfilename" => hub.db_name = val.to_string(),
-            "requirepass" => hub.requirepass = val.as_bytes().to_vec(),
-            "timeout" => hub.timeout_secs = val.parse().unwrap_or(0),
-            "maxmemory" => hub.maxmemory = val.parse().unwrap_or(0),
-            _ => {}
+            "databases" => databases = val.parse().unwrap_or(16),
+            "appendonly" => appendonly = val.eq_ignore_ascii_case("yes"),
+            "appendfsync" | "loglevel" | "maxclients" => {}
+            "dir" => dir = PathBuf::from(val),
+            "appendfilename" => aof_name = val.to_string(),
+            "dbfilename" => db_name = val.to_string(),
+            "requirepass" => requirepass = val.as_bytes().to_vec(),
+            "timeout" => timeout_secs = val.parse().unwrap_or(0),
+            "maxmemory" => maxmemory = val.parse().unwrap_or(0),
+            other => {
+                eprintln!("config: unknown directive {other}");
+                std::process::exit(1);
+            }
         }
     }
+    let mut hub = Hub::new(databases.max(1));
     hub.port = port;
-    (hub, port)
+    hub.appendonly = appendonly;
+    hub.dir = dir;
+    hub.aof_name = aof_name;
+    hub.db_name = db_name;
+    hub.requirepass = requirepass;
+    hub.timeout_secs = timeout_secs;
+    hub.maxmemory = maxmemory;
+    (hub, port, bind)
 }
 
 #[cfg(test)]

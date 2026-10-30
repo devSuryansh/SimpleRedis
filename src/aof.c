@@ -259,6 +259,7 @@ void aofLoad(void) {
     sdsfree(path);
     server.loading = 1;
     c = createClient(-1);
+    c->authenticated = 1;
     replayBuffer(c, buf);
     freeClient(c);
     server.loading = 0;

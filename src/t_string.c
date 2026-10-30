@@ -136,6 +136,10 @@ void setCommand(client *c) {
         addReplyNull(c);
         return;
     }
+    if (get && e && e->value->type != OBJ_STRING) {
+        addReplyError(c, "WRONGTYPE Operation against a key holding the wrong kind of value");
+        return;
+    }
     if (get && e)
         old = sdsdup(objectSds(e->value));
     dbSet(db, c->argv[1], createStringObject(objectSds(c->argv[2]), sdslen(objectSds(c->argv[2]))));
@@ -148,6 +152,10 @@ void setCommand(client *c) {
             when = mstime() - 1;
         setKeyExpire(c, c->argv[1], expire_ms);
         aofFeedPexpireat(c->db_id, c->argv[1], when);
+    } else {
+        e = lookupKeyWrite(db, c->argv[1]);
+        if (e && e->expire_at_ms != -1)
+            dbPersist(db, e);
     }
     if (get) {
         if (old)
@@ -227,8 +235,13 @@ void msetCommand(client *c) {
             return;
     }
     for (i = 1; i < c->argc; i += 2) {
+        kvEntry *e;
+
         dbSet(currentDb(c), c->argv[i],
               createStringObject(objectSds(c->argv[i + 1]), sdslen(objectSds(c->argv[i + 1]))));
+        e = lookupKeyWrite(currentDb(c), c->argv[i]);
+        if (e && e->expire_at_ms != -1)
+            dbPersist(currentDb(c), e);
     }
     addReplySimple(c, "OK");
 }
@@ -267,16 +280,6 @@ static void incrGeneric(client *c, long long incr) {
     addReplyLongLong(c, neu);
 }
 
-static int incrbySyntax(client *c) {
-    long long incr;
-
-    if (!getLongLongFromObject(c->argv[2], &incr)) {
-        addReplyError(c, "ERR value is not an integer or out of range");
-        return -1;
-    }
-    return 0;
-}
-
 void incrCommand(client *c) {
     incrGeneric(c, 1);
 }
@@ -288,14 +291,20 @@ void decrCommand(client *c) {
 void incrbyCommand(client *c) {
     long long incr;
 
-    getLongLongFromObject(c->argv[2], &incr);
+    if (!getLongLongFromObject(c->argv[2], &incr)) {
+        addReplyError(c, "ERR value is not an integer or out of range");
+        return;
+    }
     incrGeneric(c, incr);
 }
 
 void decrbyCommand(client *c) {
     long long incr;
 
-    getLongLongFromObject(c->argv[2], &incr);
+    if (!getLongLongFromObject(c->argv[2], &incr)) {
+        addReplyError(c, "ERR value is not an integer or out of range");
+        return;
+    }
     if (incr == LLONG_MIN) {
         addReplyError(c, "ERR increment or decrement would overflow");
         return;
@@ -474,22 +483,15 @@ void scanCommand(client *c) {
     listRelease(names);
 }
 
-static int expireSyntax(client *c) {
-    long long n;
-
-    if (!getLongLongFromObject(c->argv[2], &n)) {
-        addReplyError(c, "ERR value is not an integer or out of range");
-        return -1;
-    }
-    return 0;
-}
-
 static void expireGeneric(client *c, int absolute, int milliseconds) {
     long long ttl;
     long long when;
     kvEntry *e;
 
-    getLongLongFromObject(c->argv[2], &ttl);
+    if (!getLongLongFromObject(c->argv[2], &ttl)) {
+        addReplyError(c, "ERR value is not an integer or out of range");
+        return;
+    }
     e = lookupKeyWrite(currentDb(c), c->argv[1]);
     c->flags |= CLIENT_SKIP_AOF;
     if (!e) {
@@ -608,8 +610,8 @@ void initStringCommands(void) {
     registerCommand("mset", msetCommand, msetSyntax, -3, CMD_WRITE | CMD_DENYOOM, 1, -1, 2);
     registerCommand("incr", incrCommand, NULL, 2, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
     registerCommand("decr", decrCommand, NULL, 2, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
-    registerCommand("incrby", incrbyCommand, incrbySyntax, 3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
-    registerCommand("decrby", decrbyCommand, incrbySyntax, 3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
+    registerCommand("incrby", incrbyCommand, NULL, 3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
+    registerCommand("decrby", decrbyCommand, NULL, 3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
     registerCommand("append", appendCommand, NULL, 3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
     registerCommand("strlen", strlenCommand, NULL, 2, CMD_READONLY, 1, 1, 1);
     registerCommand("del", delCommand, NULL, -2, CMD_WRITE, 1, -1, 1);
@@ -617,10 +619,10 @@ void initStringCommands(void) {
     registerCommand("type", typeCommand, NULL, 2, CMD_READONLY, 1, 1, 1);
     registerCommand("keys", keysCommand, NULL, 2, CMD_READONLY, 0, 0, 0);
     registerCommand("scan", scanCommand, scanSyntax, -2, CMD_READONLY, 0, 0, 0);
-    registerCommand("expire", expireCommand, expireSyntax, 3, CMD_WRITE, 1, 1, 1);
-    registerCommand("pexpire", pexpireCommand, expireSyntax, 3, CMD_WRITE, 1, 1, 1);
-    registerCommand("expireat", expireatCommand, expireSyntax, 3, CMD_WRITE, 1, 1, 1);
-    registerCommand("pexpireat", pexpireatCommand, expireSyntax, 3, CMD_WRITE, 1, 1, 1);
+    registerCommand("expire", expireCommand, NULL, 3, CMD_WRITE, 1, 1, 1);
+    registerCommand("pexpire", pexpireCommand, NULL, 3, CMD_WRITE, 1, 1, 1);
+    registerCommand("expireat", expireatCommand, NULL, 3, CMD_WRITE, 1, 1, 1);
+    registerCommand("pexpireat", pexpireatCommand, NULL, 3, CMD_WRITE, 1, 1, 1);
     registerCommand("ttl", ttlCommand, NULL, 2, CMD_READONLY, 1, 1, 1);
     registerCommand("pttl", pttlCommand, NULL, 2, CMD_READONLY, 1, 1, 1);
     registerCommand("persist", persistCommand, NULL, 2, CMD_WRITE, 1, 1, 1);

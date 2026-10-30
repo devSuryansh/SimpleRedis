@@ -35,17 +35,18 @@ extern "C" fn on_signal(_: i32) {
 struct Link {
     id: u64,
     query: Vec<u8>,
+    pending: Vec<u8>,
 }
 
 pub fn serve(config: &Path) {
-    let (mut hub, port) = load_config(config);
+    let (mut hub, port, bind_addr) = load_config(config);
     hub.open_aof();
     if hub.appendonly {
         hub.load_aof();
     } else {
         let _ = hub.load_snapshot();
     }
-    let listener = TcpListener::bind(("0.0.0.0", port)).or_else(|_| TcpListener::bind(("127.0.0.1", port)));
+    let listener = TcpListener::bind((bind_addr.as_str(), port));
     let listener = match listener {
         Ok(listener) => listener,
         Err(err) => {
@@ -83,7 +84,14 @@ pub fn serve(config: &Path) {
                     let fd = stream.as_raw_fd();
                     let id = hub.add_session();
                     add_fd(epfd, fd, EPOLLIN);
-                    links.insert(fd, Link { id, query: Vec::new() });
+                    links.insert(
+                        fd,
+                        Link {
+                            id,
+                            query: Vec::new(),
+                            pending: Vec::new(),
+                        },
+                    );
                     std::mem::forget(stream);
                 }
             } else if links.contains_key(&fd) && event.events & EPOLLIN != 0 {
@@ -142,7 +150,7 @@ pub fn serve(config: &Path) {
                 if let Some(link) = links.get_mut(&fd) {
                     link.query = query;
                 }
-                flush_replies(&mut hub, &links);
+                flush_replies(&mut hub, &mut links);
                 if hub.shutdown {
                     break;
                 }
@@ -153,16 +161,24 @@ pub fn serve(config: &Path) {
     let _ = listener;
 }
 
-fn flush_replies(hub: &mut Hub, links: &HashMap<i32, Link>) {
-    let pending: Vec<(i32, u64)> = links.iter().map(|(fd, link)| (*fd, link.id)).collect();
-    for (fd, id) in pending {
+fn flush_replies(hub: &mut Hub, links: &mut HashMap<i32, Link>) {
+    let ids: Vec<(i32, u64)> = links.iter().map(|(fd, link)| (*fd, link.id)).collect();
+    for (fd, id) in ids {
         let reply = hub.take_reply(id);
-        if reply.is_empty() {
-            continue;
+        if let Some(link) = links.get_mut(&fd) {
+            link.pending.extend(reply);
+            if link.pending.is_empty() {
+                continue;
+            }
+            let mut stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+            match stream.write(&link.pending) {
+                Ok(0) | Err(_) => {}
+                Ok(n) => {
+                    link.pending.drain(..n);
+                }
+            }
+            std::mem::forget(stream);
         }
-        let mut stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
-        let _ = stream.write_all(&reply);
-        std::mem::forget(stream);
     }
 }
 

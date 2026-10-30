@@ -11,9 +11,11 @@
 #include <unistd.h>
 
 void addReplyRaw(client *c, const char *s, size_t len) {
+    if (c->flags & CLIENT_CLOSE_AFTER_REPLY && sdslen(c->reply) > PROTO_MAX_REPLY)
+        return;
     c->reply = sdscatlen(c->reply, s, len);
     if (sdslen(c->reply) > PROTO_MAX_REPLY)
-        freeClient(c);
+        c->flags |= CLIENT_CLOSE_AFTER_REPLY;
 }
 
 void addReplySimple(client *c, const char *s) {

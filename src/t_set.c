@@ -67,7 +67,7 @@ void saddCommand(client *c) {
         added++;
     }
     if (added)
-        signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+        dbTouch(currentDb(c), c->argv[1]);
     addReplyLongLong(c, added);
 }
 
@@ -93,7 +93,7 @@ void sremCommand(client *c) {
         }
     }
     if (n)
-        signalModifiedKey(currentDb(c), objectSds(c->argv[1]));
+        dbTouch(currentDb(c), c->argv[1]);
     if (dictSize(set) == 0)
         dbDelete(currentDb(c), c->argv[1]);
     addReplyLongLong(c, n);

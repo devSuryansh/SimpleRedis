@@ -68,6 +68,7 @@ static void pushGeneric(client *c, int head) {
         else
             listAddNodeTail(l, v);
     }
+    dbTouch(currentDb(c), c->argv[1]);
     addReplyLongLong(c, (long long)listLength(l));
 }
 
@@ -92,6 +93,7 @@ static void popGeneric(client *c, int head) {
     n = head ? listFirst(l) : listLast(l);
     v = sdsdup(listNodeValue(n));
     listDelNode(l, n);
+    dbTouch(currentDb(c), c->argv[1]);
     addReplyBulk(c, v, sdslen(v));
     sdsfree(v);
     if (listLength(l) == 0)
@@ -175,32 +177,12 @@ void lrangeCommand(client *c) {
     }
 }
 
-static int indexSyntax(client *c) {
-    long long n;
-
-    if (!getLongLongFromObject(c->argv[2], &n)) {
-        addReplyError(c, "ERR value is not an integer or out of range");
-        return -1;
-    }
-    return 0;
-}
-
-static int rangeSyntax(client *c) {
-    long long a, b;
-
-    if (!getLongLongFromObject(c->argv[2], &a) || !getLongLongFromObject(c->argv[3], &b)) {
-        addReplyError(c, "ERR value is not an integer or out of range");
-        return -1;
-    }
-    return 0;
-}
-
 void initListCommands(void) {
     registerCommand("lpush", lpushCommand, NULL, -3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
     registerCommand("rpush", rpushCommand, NULL, -3, CMD_WRITE | CMD_DENYOOM, 1, 1, 1);
     registerCommand("lpop", lpopCommand, NULL, 2, CMD_WRITE, 1, 1, 1);
     registerCommand("rpop", rpopCommand, NULL, 2, CMD_WRITE, 1, 1, 1);
     registerCommand("llen", llenCommand, NULL, 2, CMD_READONLY, 1, 1, 1);
-    registerCommand("lindex", lindexCommand, indexSyntax, 3, CMD_READONLY, 1, 1, 1);
-    registerCommand("lrange", lrangeCommand, rangeSyntax, 4, CMD_READONLY, 1, 1, 1);
+    registerCommand("lindex", lindexCommand, NULL, 3, CMD_READONLY, 1, 1, 1);
+    registerCommand("lrange", lrangeCommand, NULL, 4, CMD_READONLY, 1, 1, 1);
 }
