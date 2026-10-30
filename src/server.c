@@ -189,11 +189,20 @@ int processCommand(client *c) {
             c->flags |= CLIENT_DIRTY_EXEC;
         return -1;
     }
-    if (!arityOk(cmd, c->argc) || (cmd->syntax && cmd->syntax(c) != 0)) {
-        if (!arityOk(cmd, c->argc))
-            addReplyErrorFmt(c, "ERR wrong number of arguments for '%s' command", cmd->name);
+    if (!arityOk(cmd, c->argc)) {
+        addReplyErrorFmt(c, "ERR wrong number of arguments for '%s' command", cmd->name);
         if (c->flags & CLIENT_MULTI)
             c->flags |= CLIENT_DIRTY_EXEC;
+        return -1;
+    }
+    if (cmd->syntax && cmd->syntax(c) != 0) {
+        if (c->flags & CLIENT_MULTI)
+            c->flags |= CLIENT_DIRTY_EXEC;
+        return -1;
+    }
+    if (!(c->flags & CLIENT_MULTI) && (cmd->flags & CMD_DENYOOM) && !server.loading &&
+        overMaxmemory()) {
+        addReplyError(c, "OOM command not allowed when used memory > 'maxmemory'");
         return -1;
     }
     cmd->proc(c);
@@ -237,6 +246,20 @@ static int serverCron(aeEventLoop *el, long long id, void *clientData) {
     (void)clientData;
     if (shutdown_requested)
         server.shutdown_asap = 1;
+    activeExpireCycle(ACTIVE_EXPIRE_KEYS);
+    if (server.timeout > 0 && server.clients) {
+        long long now = monotime();
+        listIter *it = listGetIterator(server.clients, AL_START_HEAD);
+        listNode *ln;
+
+        while ((ln = listNext(it)) != NULL) {
+            client *c = listNodeValue(ln);
+
+            if (now - c->last_interaction_ms > (long long)server.timeout * 1000)
+                freeClient(c);
+        }
+        listReleaseIterator(it);
+    }
     if (server.shutdown_asap) {
         aeStop(server.el);
         return AE_NOMORE;
@@ -249,6 +272,11 @@ static void initCommandTable(void) {
     registerCommand("ping", pingCommand, NULL, -1, CMD_READONLY, 0, 0, 0);
     registerCommand("echo", echoCommand, NULL, 2, CMD_READONLY, 0, 0, 0);
     registerCommand("quit", quitCommand, NULL, 1, CMD_READONLY, 0, 0, 0);
+    initStringCommands();
+    initListCommands();
+    initHashCommands();
+    initSetCommands();
+    initZsetCommands();
 }
 
 void initTestServer(void) {
@@ -259,6 +287,7 @@ void initTestServer(void) {
     server.aof_fd = -1;
     server.ipfd = -1;
     initCommandTable();
+    initDatabases();
 }
 
 void initServer(void) {
@@ -269,6 +298,7 @@ void initServer(void) {
     server.clients = listCreate();
     server.aof_fd = -1;
     initCommandTable();
+    initDatabases();
     server.el_setsize = server.maxclients + 128;
     if (server.el_setsize < 128)
         server.el_setsize = 128;

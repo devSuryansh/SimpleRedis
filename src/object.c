@@ -38,5 +38,13 @@ void decrRefCount(robj *o) {
     }
     if (o->type == OBJ_STRING)
         sdsfree(o->ptr);
+    else if (o->type == OBJ_LIST)
+        freeListObject(o);
+    else if (o->type == OBJ_HASH)
+        freeHashObject(o);
+    else if (o->type == OBJ_SET)
+        freeSetObject(o);
+    else if (o->type == OBJ_ZSET)
+        freeZsetObject(o);
     zfree(o);
 }

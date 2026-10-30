@@ -213,3 +213,19 @@ dictNode *dictNext(dictIterator *it) {
 void dictReleaseIterator(dictIterator *it) {
     zfree(it);
 }
+
+int dictIsRehashing(const dict *d) {
+    return d->rehashidx != -1;
+}
+
+unsigned long dictSlotCount(const dict *d, int table) {
+    if (table < 0 || table > 1)
+        return 0;
+    return d->size[table];
+}
+
+dictNode *dictSlotHead(const dict *d, int table, unsigned long slot) {
+    if (table < 0 || table > 1 || !d->ht[table] || slot >= d->size[table])
+        return NULL;
+    return d->ht[table][slot];
+}

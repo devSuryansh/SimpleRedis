@@ -25,5 +25,8 @@ dictNode *dictNext(dictIterator *it);
 void dictReleaseIterator(dictIterator *it);
 /* Move up to n occupied buckets from the old table into the new one. */
 void dictRehash(dict *d, int n);
+int dictIsRehashing(const dict *d);
+unsigned long dictSlotCount(const dict *d, int table);
+dictNode *dictSlotHead(const dict *d, int table, unsigned long slot);
 
 #endif
